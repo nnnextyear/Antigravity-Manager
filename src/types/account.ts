@@ -179,7 +179,7 @@ export function getAccountTier(account: { quota?: QuotaData | null; token?: { is
  *    Ultra 订阅上游全量授权旗舰模型（纳入高阶特权共享池），即便 quota_groups 未拆分独立桶，也原生享有完整权限；
  * 2. Pro 套餐或灰度专属分组 (Google AI Pro)：
  *    上游在真实 quota_groups 中显式下发了专属旗舰配额组（如 gemini-neon-wtu-weekly 或 gemini-argon-wtu-weekly），
- *    或（无 groups 离线兜底时）models 列表中明确包含非禁用的旗舰官方条目；
+ *    或 models 列表中明确包含非禁用的旗舰官方条目；
  * 3. Free / 未授权套餐：
  *    未分配专属分组且非 Ultra/Enterprise，坚决判定为 false（严格防呆隔离，杜绝虚假徽章与卡片）。
  */
@@ -211,7 +211,7 @@ export function checkFlagshipEligibility(
         return true;
     }
 
-    // 判据 2: Pro 套餐或灰度授权（必须在真实 quota_groups 中分配了专属旗舰分组/桶，如 neon / argon）
+    // 判据 2: Pro 套餐或灰度授权（在真实 quota_groups 中分配了专属旗舰分组/桶，如 neon / argon）
     const hasFlagshipInGroups = (groups || []).some(group => {
         const groupName = (group?.display_name || '').toLowerCase();
         return /neon|argon/i.test(groupName)
@@ -220,6 +220,14 @@ export function checkFlagshipEligibility(
 
     if (hasFlagshipInGroups) {
         return true;
+    }
+
+    // 判据 2.5: Pro 套餐若上游 models 列表中明确包含非禁用旗舰模型（如 Argon 已合并至通用 Gemini 组）
+    if (tier === 'pro') {
+        return models.some(m => {
+            const n = (m?.name || '').toLowerCase();
+            return isFlagshipModel(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+        });
     }
 
     // 判据 3: 无 groups 数据时的离线/冷启动兜底（仅当服务端未返回任何 groups，且 models 明确包含非禁用旗舰模型）
