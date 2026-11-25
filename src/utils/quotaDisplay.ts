@@ -31,7 +31,7 @@ export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefi
     const name = modelId.toLowerCase();
     const isArgon = isArgonModel(name);
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
-    const buckets = (groups || []).filter(group => {
+    let buckets = (groups || []).filter(group => {
         const groupName = (group?.display_name || '').toLowerCase();
         const hasArgonBucket = (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('argon'));
         const groupIsArgon = groupName.includes('argon') || hasArgonBucket;
@@ -42,6 +42,14 @@ export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefi
             || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
         return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
     }).flatMap(group => group?.buckets || []);
+    if (isArgon && buckets.length === 0) {
+        buckets = (groups || []).filter(group => {
+            const groupName = (group?.display_name || '').toLowerCase();
+            const isThirdParty = /claude|gpt|3p/.test(groupName)
+                || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
+            return !isThirdParty;
+        }).flatMap(group => group?.buckets || []);
+    }
     const hasGroups = (groups || []).length > 0;
     if (isArgon && hasGroups && buckets.length === 0) {
         if (model && model.percentage > 0) {
@@ -87,7 +95,7 @@ export function getModelConstrainedQuota(
     const isArgon = isArgonModel(name);
     const thirdParty = !isArgon && (name.startsWith('claude') || name.startsWith('gpt'));
 
-    const buckets = (groups || []).filter(group => {
+    let buckets = (groups || []).filter(group => {
         const groupIsArgon = isDedicatedG4Group(group) || /neon|argon/i.test(group?.display_name || '');
         if (isArgon) return groupIsArgon;
         if (groupIsArgon) return false;
@@ -97,6 +105,15 @@ export function getModelConstrainedQuota(
             || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
         return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
     }).flatMap(group => group?.buckets || []);
+
+    if (isArgon && buckets.length === 0) {
+        buckets = (groups || []).filter(group => {
+            const groupName = (group?.display_name || '').toLowerCase();
+            const isThirdParty = /claude|gpt|3p/.test(groupName)
+                || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
+            return !isThirdParty;
+        }).flatMap(group => group?.buckets || []);
+    }
 
     const hasGroups = (groups || []).length > 0;
     if (isArgon && hasGroups && buckets.length === 0) {
@@ -350,8 +367,8 @@ export function getGroupQuotaSummaries(
             return target === 'claude' ? isThirdParty : !isThirdParty;
         }).flatMap(group => group?.buckets || []);
 
-        // Ultra 账号在官方架构下未拆分专属旗舰分组，其旗舰额度共享 Gemini 通用配额池
-        if (target === 'argon' && directBuckets.length === 0 && isUltraTier) {
+        // Ultra / Pro 账号在官方未拆分专属旗舰分组时，其旗舰额度共享 Gemini 通用配额池
+        if (target === 'argon' && directBuckets.length === 0 && (isUltraTier || tier === 'pro')) {
             return (groups || []).filter(group => {
                 const groupName = (group?.display_name || '').toLowerCase();
                 const isThirdParty = /claude|gpt|3p/.test(groupName)
@@ -538,4 +555,3 @@ export function getGroupQuotaSummaries(
 
     return summaries;
 }
-
