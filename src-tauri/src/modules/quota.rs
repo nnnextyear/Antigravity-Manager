@@ -547,7 +547,6 @@ pub async fn fetch_quota_with_cache(
                 // Convert HTTP error status to AppError
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
-
                     if crate::proxy::upstream::client::should_try_next_endpoint_for_url(
                         status, ep_url,
                     ) {
@@ -1600,6 +1599,7 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
 enum QuotaGroupMatch<'a> {
     Matched(&'a crate::models::quota::QuotaGroup),
     NoGroupKeep,
+    #[allow(dead_code)]
     SkipUnauthorized,
 }
 
@@ -1672,17 +1672,15 @@ fn extract_g4_codename(name_lower: &str) -> Option<String> {
 
 /// Match a model from `fetchAvailableModels` against `retrieveUserQuotaSummary` groups.
 ///
-/// Only legacy `argon` enforces the dedicated-group-or-Ultra gate (#3745). Other Gemini 4+
-/// models (e.g. `hydrogen`, `carbon`, or future codenames) prefer a matching dedicated group
-/// when present and otherwise fall back to the standard Gemini pool across all account tiers.
+/// Gemini 4+ models (including `argon`, `hydrogen`, `carbon`, etc.) prefer a matching dedicated
+/// group when present and otherwise fall back to the standard Gemini pool across all account tiers.
 fn match_quota_group_for_model_with_codenames<'a>(
     groups: &'a [crate::models::quota::QuotaGroup],
     name_lower: &str,
-    is_ultra: bool,
+    _is_ultra: bool,
     known_codenames: &[String],
 ) -> QuotaGroupMatch<'a> {
     let g4_codename = extract_g4_codename(name_lower);
-    let is_argon = g4_codename.as_deref() == Some("argon");
     let is_claude_or_gpt = g4_codename.is_none()
         && (name_lower.starts_with("claude") || name_lower.starts_with("gpt"));
 
@@ -1697,18 +1695,8 @@ fn match_quota_group_for_model_with_codenames<'a>(
         if let Some(specific) = groups.iter().find(|g| group_matches_codename(g, code)) {
             return QuotaGroupMatch::Matched(specific);
         }
-        // Only Argon preserves the strict non-Ultra dedicated-group gate (#3745).
-        if is_argon && !is_ultra {
-            return QuotaGroupMatch::SkipUnauthorized;
-        }
-        return find_general_gemini_group(groups, known_codenames).map_or(
-            if is_argon {
-                QuotaGroupMatch::SkipUnauthorized
-            } else {
-                QuotaGroupMatch::NoGroupKeep
-            },
-            QuotaGroupMatch::Matched,
-        );
+        return find_general_gemini_group(groups, known_codenames)
+            .map_or(QuotaGroupMatch::NoGroupKeep, QuotaGroupMatch::Matched);
     }
 
     // Standard Gemini models avoid dedicated G4/3P groups.
@@ -1840,7 +1828,7 @@ mod tests {
         );
     }
 
-    /// 配额读数必须来自推理实际使用的 host。Prod 已在 6a4806e 从推理端点移除，
+    /// 配额读数必须来自推理实际使用的 host。Prod 已在 6a4806e 从推理端点中移除，
     /// 而它报告的 Gemini 配额与 Daily / Sandbox 不一致；两份列表一旦再次分叉，这里会失败。
     #[test]
     fn test_quota_endpoints_only_use_inference_hosts() {
@@ -1967,13 +1955,14 @@ mod tests {
             make_test_group("Claude", "3p-5h"),
         ];
 
-        // Non-Ultra accounts without a dedicated "hydrogen"/"carbon" bucket must fall back
+        // Non-Ultra accounts without a dedicated codename bucket must fall back
         // to the standard Gemini pool instead of discarding models returned by fetchAvailableModels.
         for model in [
             "gemini-4-hydrogen-high",
             "gemini-4-hydrogen-low",
             "gemini-4-carbon-xhigh",
             "gemini-4-helium-medium",
+            "gemini-4-argon-high",
         ] {
             match match_quota_group_for_model(&groups, model, false) {
                 QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
@@ -1981,11 +1970,6 @@ mod tests {
             }
         }
 
-        // Legacy Argon still enforces the dedicated-group-or-Ultra gate (#3745).
-        assert!(matches!(
-            match_quota_group_for_model(&groups, "gemini-4-argon-high", false),
-            QuotaGroupMatch::SkipUnauthorized
-        ));
         match match_quota_group_for_model(&groups, "gemini-4-argon-high", true) {
             QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
             other => panic!("expected Ultra Argon fallback to Gemini, got {other:?}"),
