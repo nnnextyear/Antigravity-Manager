@@ -1745,9 +1745,13 @@ impl TokenManager {
                 })
         };
 
-        // 1. Argon 保持既有独立桶 / Ultra 兜底与防呆清理语义 (#3745)
+        // 1. Argon 保持既有独立桶 / Ultra 或已授权模型回退通用 Gemini 桶 (#3745)
+        let has_argon_in_available = available_models.iter().any(|m| {
+            crate::proxy::common::model_mapping::extract_gemini4_codename(m).as_deref()
+                == Some("argon")
+        });
         let argon_frac = primary_fraction_for("argon").or_else(|| {
-            if is_ultra {
+            if is_ultra || has_argon_in_available {
                 Some(primary_fraction_for("gemini").unwrap_or(1.0))
             } else {
                 None
